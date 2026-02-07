@@ -32,7 +32,7 @@ async function startDragonBot() {
 
     // 🚀 PAIRING CODE (HACKER PROOF LOGIN)
     if (!conn.authState.creds.registered) {
-        const phoneNumber = "91xxxxxxxxxx"; // <== Ninte number (91 kootti) ivide kodukku!
+        const phoneNumber = "917012074195"; // <== Ninte number (91 kootti) ivide kodukku!
         console.log("🐲 Initiating Secure Pairing...");
         await delay(7000);
         const code = await conn.requestPairingCode(phoneNumber);
