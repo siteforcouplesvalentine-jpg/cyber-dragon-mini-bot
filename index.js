@@ -1,66 +1,98 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require("@whiskeysockets/baileys");
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    delay,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    makeInMemoryStore,
+    jidDecode
+} = require("@whiskeysockets/baileys");
 const pino = require("pino");
-const express = require("express");
-const app = express();
+const { smsg } = require('./lib/myfunc'); 
+const fs = require('fs');
 
-// 🌐 Render Web Server - Keep alive logic
-app.get("/", (req, res) => res.send("🐲 Cyber Dragon Mini Bot: Online & Guarded!"));
-app.listen(process.env.PORT || 3000);
+const store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) });
+store.readFromFile('./dragon_store.json');
+setInterval(() => { store.writeToFile('./dragon_store.json'); }, 10000);
 
-const spamLimit = new Map();
+async function startDragonBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('session_id');
+    const { version } = await fetchLatestBaileysVersion();
 
-async function startDragon() {
-    // Session path set within /tmp for safe handling
-    const { state, saveCreds } = await useMultiFileAuthState('session_mini');
-    
     const conn = makeWASocket({
+        version,
         auth: state,
-        logger: pino({ level: "silent" }), // 📉 Minimal RAM usage
-        printQRInTerminal: true,
-        browser: ["Cyber Dragon Bot", "Safari", "1.0.0"]
+        printQRInTerminal: false,
+        logger: pino({ level: "silent" }),
+        browser: ["Ubuntu", "Chrome", "20.0.04"],
+        fireInitQueries: false,
+        shouldSyncHistoryMessage: false,
+        markOnlineOnConnect: true
     });
 
-    conn.ev.on("messages.upsert", async (m) => {
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
-        const from = msg.key.remoteJid;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+    // 🚀 PAIRING CODE (HACKER PROOF LOGIN)
+    if (!conn.authState.creds.registered) {
+        const phoneNumber = "91xxxxxxxxxx"; // <== Ninte number (91 kootti) ivide kodukku!
+        console.log("🐲 Initiating Secure Pairing...");
+        await delay(7000);
+        const code = await conn.requestPairingCode(phoneNumber);
+        console.log(`\n\n🛡️ SECURE PAIRING CODE: ${code}\n\n`);
+    }
 
-        // 🛡️ Hacker Protection: Anti-Spam
-        if (!spamLimit.has(from)) spamLimit.set(from, 0);
-        spamLimit.set(from, spamLimit.get(from) + 1);
-        if (spamLimit.get(from) > 15) return; 
-
-        // 1. .vv (View Once Command)
-        if (text === ".vv") {
-            const quotedMsg = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-            const viewOnce = quotedMsg?.viewOnceMessageV2 || quotedMsg?.viewOnceMessage;
-            
-            if (viewOnce) {
-                await conn.sendMessage(from, { forward: { key: msg.key, message: viewOnce }, force: true }, { quoted: msg });
-            } else {
-                await conn.sendMessage(from, { text: "Command failed: Please reply to a View Once message with .vv" });
-            }
-        }
-
-        // 2. .emergency 🚨
-        else if (text === ".emergency") {
-            await conn.sendMessage(from, { text: "🚨 *CYBER DRAGON SHIELD:* Uptime is stable. Protected against spam bugs! 🐲🛡️" });
-        }
-    });
-
-    setInterval(() => spamLimit.clear(), 60000); // Clear anti-spam tracker every minute
-
+    store.bind(conn.ev);
     conn.ev.on("creds.update", saveCreds);
-    conn.ev.on("connection.update", (up) => {
-        if (up.connection === "close") {
-            const code = up.lastDisconnect.error?.output?.statusCode;
-            if (code !== DisconnectReason.loggedOut) startDragon();
-        } else if (up.connection === "open") {
-            console.log("✅ Cyber Dragon Mini Bot Connected!");
+
+    // 🛡️ HACKER PROTECTION & SECURITY
+    conn.ev.on("call", async (json) => {
+        const callerId = json[0].from;
+        console.log(`🚫 ANTI-CALL: Rejecting call from ${callerId}`);
+        await conn.rejectCall(json[0].id, callerId); // Hacker-ukal call vazhi hang aakkunnathu thadayunnu.
+    });
+
+    conn.ev.on("messages.upsert", async (chatUpdate) => {
+        try {
+            const mek = chatUpdate.messages[0];
+            if (!mek.message) return;
+            
+            // AUTO STATUS VIEW
+            if (mek.key && mek.key.remoteJid === 'status@broadcast') {
+                await conn.readMessages([mek.key]);
+                return;
+            }
+
+            const m = smsg(conn, mek, store);
+            const body = m.text || '';
+            const prefix = /^[°•π÷×¶∆£¢€¥®™✓_=|~!?#%^&.+/,.;:-]/.test(body) ? body.match(/^[°•π÷×¶∆£¢€¥®™✓_=|~!?#%^&.+/,.;:-]/)[0] : '';
+            const command = body.startsWith(prefix) ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : '';
+
+            // 🆘 EMERGENCY & HELP MENU
+            if (command === 'emergency') {
+                const text = `🚨 *CYBER DRAGON SHIELD* 🚨\n\n🚑 Ambulance: 108\n👮 Police: 112\n🔥 Fire: 101\n🛡️ Protection: ACTIVE`;
+                await conn.sendMessage(m.chat, { text }, { quoted: m });
+            }
+
+            // 📸 .VV (VIEW ONCE) - Automatically saved in store
+            if (m.mtype === 'viewOnceMessageV2') {
+                console.log("🐲 Secure Bypass: View Once captured.");
+            }
+
+            require("./dragon")(conn, m, chatUpdate, store); 
+            
+        } catch (err) {
+            console.log("Security Log: ", err);
+        }
+    });
+
+    conn.ev.on("connection.update", async (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === "close") {
+            if (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) {
+                startDragonBot();
+            }
+        } else if (connection === "open") {
+            console.log("🐲 CYBER DRAGON SECURED & ONLINE!");
         }
     });
 }
 
-startDragon();
-
+startDragonBot();
